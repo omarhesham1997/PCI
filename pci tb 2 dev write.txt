@@ -1,0 +1,537 @@
+module arbitr(clk,rst,frame,irdy,reqA,reqB,reqC,gntA,gntB,gntC);
+
+/////////////////////////////////////////
+///// i/o decalrtiom///////////////////
+///////////////////////////////////////
+output reg gntA,gntB,gntC;
+input clk,rst,frame,irdy,reqA,reqB,reqC;
+
+
+
+reg flagA,flagB,flagC;	// flags defines the state of the devices' GNTs 
+reg rframe,rirdy,rreqA,rreqB,rreqC; //register reads inputs at every posedge and use its values in the negedge
+
+
+always @(posedge clk or negedge rst)
+begin
+
+//assigning wires to reg 
+rreqA<=reqA;
+rreqB<=reqB;
+rframe<=frame;
+rreqC<=reqC;
+rirdy<=irdy;
+
+
+//Assigning flags
+if(gntA==0&&frame==0) flagA<=1;
+else if(gntB==0&&frame==0) flagB<=1;
+else if(gntC==0&&frame==0) flagC<=1;
+
+if(rst==0)
+begin 
+	gntA<=1;
+	gntB<=1;
+	gntC<=1; 
+	flagA<=0;
+	flagB<=0;
+	flagC<=0;
+end
+end
+
+always @(negedge clk)
+begin
+
+if(flagA==1)gntA<=1;
+if(flagB==1)gntB<=1;
+if(flagC==1)gntC<=1;
+
+//Priorty A>B>C
+
+//THE first three condition is for the inilization of the bus
+if(rreqA==0&&gntB&&gntC&&flagA==0&&flagB==0&&flagC==0)
+begin
+	gntA<=0;
+end
+else if(rreqB==0&&gntA&&gntC&&flagA==0&&flagB==0&&flagC==0)
+begin
+	gntB<=0;
+end
+else if(rreqC==0&&gntA&&gntB&&flagA==0&&flagB==0&&flagC==0)
+begin
+	gntC<=0;
+end
+
+else if(rreqA==0&&flagB)
+begin
+	gntA<=0;
+	flagB<=0;
+end
+else if(rreqA==0&&flagC)
+begin
+	gntA<=0;
+	flagC<=0;
+end
+else if(rreqB==0&&flagA)
+begin
+	gntB<=0;
+	flagA<=0;
+end
+else if(rreqB==0&&flagC)
+begin
+	gntB<=0;
+	flagC<=0;
+end
+else if(rreqC==0&&flagA)
+begin
+	gntC<=0;
+	flagA<=0;
+end
+else if(rreqC==0&&flagB)
+begin
+	gntC<=0;
+	flagB<=0;
+end
+
+
+end
+endmodule
+
+
+
+
+module tb_arbiter();
+reg clk,rst,frame,irdy,reqA,reqB,reqC; 
+wire gntA,gntB,gntC;
+initial
+begin
+//RESET
+clk=0;
+rst = 0 ;
+frame = 1 ;
+irdy = 1 ;
+#200
+rst = 1 ;
+#200
+//REQ A,B at same time
+reqA = 0 ;
+reqB = 0;
+reqC =1;
+#400
+//simulate device action by assign frame down 
+frame = 0 ;
+#200 
+frame = 1 ;
+reqA = 1 ;
+#400
+// frame is down while A,C requests bus
+frame=0;
+reqC=0;
+reqA=0;
+#200
+frame=1;
+reqB=1;
+#200
+frame=0;
+reqA=1;
+#200 
+frame=1;
+#200
+frame=0;
+reqC=1;
+
+
+end
+
+
+arbitr A1(clk,rst,frame,irdy,reqA,reqB,reqC,gntA,gntB,gntC);
+
+
+always #100 clk = ~clk;
+
+endmodule
+
+
+
+
+
+
+module device(clk,req,gnt,frame,ad_bus,cbe,irdy,trdy,devsel,address_to_contact,my_address,force_request,data_phases,rst_mem_pointer);
+/////////////////////////////////////////
+///// i/o decalrtiom///////////////////
+///////////////////////////////////////
+reg [31:0] mem [0:9]; 
+input [1:0]address_to_contact,data_phases,my_address;
+input clk,force_request,gnt;
+output req;
+inout frame,irdy,trdy,devsel;
+inout [31:0]ad_bus;
+input [1:0]cbe;
+input rst_mem_pointer;
+
+
+parameter read=0;
+parameter write=1;
+
+////////////////////////////////////
+/////// REQUEST and DATAPHASE///////
+////////////////////////////////////
+assign req = force_request;
+reg [1:0] dataphase;
+
+
+
+
+/////////////////////////////////
+//////////  FLAGS  //////////////
+////////////////////////////////
+
+reg frame_down_flag,rgnt,frame_up_flag,ad_flag,flag_irdy,flag_trdy,flag_devsel,flag_mem;  
+ 
+// frame_down_flag : asserts the frame down during read
+// ad_flag : asserts Z on address bus after adding address
+// flag_irdy : asserts irdy down after address in pust on address bus
+
+
+
+reg rcbe;
+reg [31:0]rad_bus;
+reg rframe,rirdy;
+reg counter_ad;
+reg [1:0]counter_dataphase;
+reg rtrdy,rdevsel;
+reg [3:0]pointer_mem;
+reg [1:0]counter_trdy_devsel; 
+ 
+
+
+
+
+
+////////////////////////////////////
+//// assign frame & irdy & C/BE/////
+//////////// &addressbus ///////////
+////////////////////////////////////
+assign frame = (frame_down_flag && frame_up_flag )? 1'bz:(!frame_up_flag && frame_down_flag )?1:0;
+assign irdy = (flag_irdy)? 1'bz:0;
+assign ad_bus = rad_bus;
+assign trdy=rtrdy;
+assign devsel=rdevsel;
+
+
+
+
+
+
+
+
+
+
+
+
+
+always @(posedge clk)
+begin
+
+ 
+dataphase<=data_phases;
+rgnt<=gnt;
+if(rst_mem_pointer==0)
+	pointer_mem<=0;
+
+
+
+if(rad_bus==address_to_contact&&cbe==read)   //ad_flag: ana 7atet el address 3ala ADbus
+	ad_flag<=0;
+
+
+if(ad_bus!==32'bzzzz_zzzz &&ad_flag==0&&cbe==read)  //el counter_ad da 3ashan el turn around fi 7alet el read ba3d ma 2atkd en rlly 3al bus da address
+		 counter_ad<=0;
+else //if(ad_flag==0&&rcbe==read)
+		counter_ad<=counter_ad+1;
+
+
+if(ad_bus!==32'bzzzz_zzzz &&ad_flag==1&&cbe==read)  //hena el ad_flag marfoo3 w el adbus msh z ma3na kda en elly 3al bus da data msh address w el counter_dataphase da 3ashan a3rf emta arf3 el frame
+		counter_dataphase<=counter_dataphase+1;
+	
+
+
+
+end
+
+
+always @(negedge clk)
+begin
+dataphase<=data_phases;
+if(rgnt==0) 
+begin
+	frame_down_flag<=0;   //lama 5at el grant hanzl el frame
+	rcbe<=cbe;		//ba7ot el command
+	rad_bus<=address_to_contact;//ba7ot el address 3al adbus
+	
+end
+
+if(ad_flag==0&&cbe==read)  // delwa2ty ana 2aret el address 5alas  w ana fi  case read f el mafrood astana turn around cycle 
+begin
+
+	rad_bus<=32'hzzzzzzzz;
+	flag_irdy<=0;
+	ad_flag<=1;             //ba3ml reset ll adress flag 3ashan ana 2aerto 5alas
+	counter_dataphase<=0;  //ba3d ma 2aret el address bbtdy 2a3ed el dataphases
+
+end
+
+
+
+
+
+/////////////////
+//////READ////// 
+///////////////
+
+
+if(counter_ad==1 && ad_flag==1 &&cbe==read) //ba3d ma 3adeet el turn around w en ad flag marfoo3  el  mafrood a7ot el data delwa2ty
+begin	
+	rad_bus<=32'hAAAA_AAAA;  //el data hena elly mafrood el target y7otaha
+	if(counter_dataphase == dataphase)//ba3d ma 5alst ba3t data bfdy el adbus
+		begin
+			rad_bus<=32'hZZZZ_ZZZZ;
+			frame_up_flag<=1;
+			counter_dataphase<=2'bxx;
+			ad_flag<=1'bx;
+		end
+	if(counter_dataphase == dataphase-1)//abl 2a5er dataphase brf3 el frame
+		begin	
+			frame_down_flag<=1;
+			frame_up_flag<=0;
+		end
+	
+end
+if(cbe==read)
+counter_ad<=0;
+
+end
+
+
+////////////
+//WRITE/////
+///////////
+
+always@(posedge clk)
+begin
+dataphase<=data_phases;
+rgnt<=gnt;
+
+
+
+if(rad_bus==address_to_contact)   //ad_flag: ana 7atet el address 3ala ADbus
+	ad_flag<=0;
+
+if(ad_bus!==32'bzzzz_zzzz &&ad_flag==1&&cbe==write)  //hena el ad_flag marfoo3 w el adbus msh z ma3na kda en elly 3al bus da data msh address w el counter_dataphase da 3ashan a3rf emta arf3 el frame
+	counter_dataphase<=counter_dataphase+1;
+
+if(flag_trdy==1)
+	counter_trdy_devsel<=counter_trdy_devsel+1;
+if(flag_mem==0 && cbe==write && address_to_contact==my_address)	
+begin
+	if(pointer_mem==9)
+	begin
+		pointer_mem<=0;
+	
+	end	
+	else
+		pointer_mem<=pointer_mem+1;	
+
+
+	mem[pointer_mem]<=rad_bus;
+	
+	
+end	
+	if(frame_up_flag==0)
+	begin
+		flag_mem<=1;
+		
+	end
+end
+
+always@(negedge clk)
+begin
+if(rgnt==0) 
+begin
+	frame_down_flag<=0;   //lama 5at el grant hanzl el frame
+	rcbe<=cbe;		//ba7ot el command
+	rad_bus<=address_to_contact;//ba7ot el address 3al adbus
+	counter_trdy_devsel<=0;
+end
+
+if(flag_trdy==0)
+	rtrdy<=0;
+if(flag_devsel==0)
+	rdevsel=0;
+
+	
+	
+
+if(ad_flag==0&&cbe==write)
+begin
+	rad_bus<=32'hCCCC_CCCC;
+	flag_mem<=0;
+	ad_flag<=1;
+	counter_dataphase<=0;
+
+	if(address_to_contact==my_address)
+	begin
+		flag_trdy<=0;
+		flag_devsel<=0;
+	end
+
+end
+
+if(ad_flag==1 &&cbe==write) //ba3d ma 3adeet el turn around w en ad flag marfoo3  el  mafrood a7ot el data delwa2ty
+begin	
+	
+	if(counter_dataphase == dataphase)//ba3d ma 5alst ba3t data bfdy el adbus
+		begin
+			rad_bus<=32'hZZZZ_ZZZZ;
+			frame_up_flag<=1;
+			counter_dataphase<=2'bxx;
+			ad_flag<=1'bx;
+			rdevsel<=1;
+			rtrdy<=1;	
+			flag_trdy<=1;
+		        flag_devsel<=1;
+			
+
+		end
+	if(counter_dataphase == dataphase-1)//abl 2a5er dataphase brf3 el frame
+		begin	
+			frame_down_flag<=1;
+			frame_up_flag<=0;
+		end
+	
+end
+ 	if(counter_trdy_devsel==1)
+		begin
+			rtrdy<=1'bz;
+			rdevsel<=1'bz;	
+		end
+
+end
+
+endmodule
+
+
+
+
+module tb_write ();
+
+reg clk,gnt , rst_mem_pointer;
+wire [31:0]ad_bus ;
+wire frame,irdy;
+reg [1:0] data_phases ,address_to_contact,my_address, cbe;
+
+initial
+begin
+
+//1 process 
+clk=1;
+#50
+rst_mem_pointer=0;
+#200
+rst_mem_pointer=1;
+#100
+gnt=0;
+address_to_contact=0;
+my_address=0;
+data_phases=3;
+cbe=1;
+#200
+gnt=1;
+
+#350
+cbe=2'bzz;
+
+
+#650
+gnt=0;
+address_to_contact=0;
+my_address=0;
+data_phases=3;
+cbe=1;
+#200
+gnt=1;
+#350
+cbe=2'bzz;
+
+
+ 
+#650
+gnt=0;
+address_to_contact=0;
+my_address=0;
+data_phases=3;
+cbe=1;
+#200
+gnt=1;
+#350
+cbe=2'bzz;
+#650
+gnt=0;
+address_to_contact=0;
+my_address=0;
+data_phases=3;
+cbe=1;
+#200
+gnt=1;
+#350
+cbe=2'bzz;
+end
+
+always
+begin
+#50 
+clk=~clk;
+end
+device a(clk,req,gnt,frame,ad_bus,cbe,irdy,trdy,devsel,address_to_contact,my_address,force_request,data_phases,rst_mem_pointer);
+endmodule
+
+
+
+
+
+module tb_write_two_devices ();
+
+reg clk,gntA,gntB , rst_mem_pointerA,rst_mem_pointerB;
+wire [31:0]ad_bus ;
+wire frame,irdy;
+reg [1:0] data_phases,address_to_contact,my_addressA,my_addressB, cbe;
+
+initial
+begin
+my_addressA=0;
+my_addressB=1;
+//1 process// 
+clk=1;
+#50
+rst_mem_pointerB=0;
+#200
+rst_mem_pointerB=1;
+#100
+gntA=0;
+address_to_contact=1;
+data_phases=3;
+cbe=1;
+#200
+gntA=1;
+
+#350
+cbe=2'bzz;
+end
+always
+begin
+#50 
+clk=~clk;
+end
+device a(clk,req,gntA,frame,ad_bus,cbe,irdy,trdy,devsel,address_to_contact,my_addressA,force_request,data_phases,rst_mem_pointerA);
+device b(clk,req,gntB,frame,ad_bus,cbe,irdy,trdy,devsel,address_to_contact,my_addressB,force_request,data_phases,rst_mem_pointerB);
+endmodule
